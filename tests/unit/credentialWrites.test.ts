@@ -493,9 +493,8 @@ describe("handing a token over from the wallet", () => {
     expect(c.storage.getXcashuTokensForBaseUrl(PROVIDER)).toEqual([]);
   });
 
-  it("drops the losing handover copy when two requests create a key at once", async () => {
-    const { control, driver } = controlledDriver(SDK_STORAGE_KEYS.XCASHU_TOKENS);
-    control.release();
+  it("drops the losing handover copy and waits for the winner's key when two requests create a key at once", async () => {
+    const { control, driver } = controlledDriver(SDK_STORAGE_KEYS.API_KEYS);
     const c = await client(driver);
     let sends = 0;
     let bothSent!: () => void;
@@ -507,9 +506,16 @@ describe("handing a token over from the wallet", () => {
       await persistToken?.(token);
       return token;
     });
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [] })));
+    const network = vi.fn(async () => Response.json({ choices: [] }));
+    vi.stubGlobal("fetch", network);
 
-    await Promise.all([c.request(), c.request()]);
+    const requests = Promise.all([c.request(), c.request()]);
+    // The loser gives its own token back, then reuses the winner's key.
+    await vi.waitFor(() => expect(c.wallet.receiveToken).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(network).not.toHaveBeenCalled();
+    control.release();
+    await requests;
 
     const winner = c.storage.getApiKey(PROVIDER)?.key;
     expect(c.wallet.receiveToken).toHaveBeenCalledOnce();
