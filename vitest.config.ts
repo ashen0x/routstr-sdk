@@ -11,6 +11,7 @@ export default defineConfig({
     //   npx vitest run tests/unit
     //   npx vitest run tests/integration
     include: ["tests/**/*.test.ts"],
-    exclude: ["node_modules/**", "dist/**"],
+    // tests/bun imports bun:test, so it runs under Bun: `pnpm test:sdk:bun`.
+    exclude: ["node_modules/**", "dist/**", "tests/bun/**"],
   },
 });
