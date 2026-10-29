@@ -140,39 +140,6 @@ export interface NodeModelPaths {
   updatedAt: number | null;
 }
 
-/**
- * Fetch one node's GET /v1/models/paths and keep the fields the SDK needs:
- * the model id and, per path, the advertised selector string used verbatim as
- * the x-routstr-model-path header value. Returns null on any failure
- * (network, non-200, malformed payload).
- */
-export async function fetchModelPaths(
-  baseUrl: string,
-  fetchImpl: typeof fetch = fetch
-): Promise<NodeModelPaths | null> {
-  const normalized = normalizeProviderUrl(baseUrl);
-  if (!normalized) return null;
-  let url: URL;
-  try {
-    url = new URL("v1/models/paths", normalized);
-  } catch {
-    return null;
-  }
-  let payload: unknown;
-  try {
-    payload = await withProviderDeadline(async (signal) => {
-      const response = await fetchImpl(url.toString(), {
-        headers: { accept: "application/json" }, signal,
-      });
-      if (!response.ok) return null;
-      return await response.json();
-    }, 10_000);
-  } catch {
-    return null;
-  }
-  return parseModelPathsPayload(payload);
-}
-
 /** Defensive parse of a /v1/models/paths payload; null when malformed. */
 export function parseModelPathsPayload(payload: unknown): NodeModelPaths | null {
   if (!payload || typeof payload !== "object") return null;
@@ -497,35 +464,11 @@ export function deepSeekModelPathHeaders(
   return { [MODEL_PATH_HEADER]: deepSeekModelPath(modelId, route) };
 }
 
-/** Cached /v1/models/paths payloads, keyed by node base URL. */
-const MODEL_PATHS_TTL_MS = 10 * 60 * 1000;
-const modelPathsCache = new Map<string, { paths: NodeModelPaths; at: number }>();
-
 /** Drop cached /v1/models/paths payloads (tests, manual refresh). */
 export function clearModelPathsCache(): void {
-  modelPathsCache.clear();
   modelPathsForModelCache.clear();
   modelPathsForModelFailures.clear();
   modelPathsForModelInFlight.clear();
-}
-
-/**
- * A node's GET /v1/models/paths payload, cached for MODEL_PATHS_TTL_MS.
- * On fetch failure the stale cache entry (if any) is kept.
- */
-export async function getNodeModelPaths(
-  baseUrl: string
-): Promise<NodeModelPaths | null> {
-  const cached = modelPathsCache.get(baseUrl);
-  if (cached && Date.now() - cached.at < MODEL_PATHS_TTL_MS) {
-    return cached.paths;
-  }
-  const fetched = await fetchModelPaths(baseUrl);
-  if (fetched) {
-    modelPathsCache.set(baseUrl, { paths: fetched, at: Date.now() });
-    return fetched;
-  }
-  return cached?.paths ?? null;
 }
 
 // ─── Per-model path lookups ─────────────────────────────────────────────

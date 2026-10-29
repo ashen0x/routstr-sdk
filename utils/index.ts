@@ -26,8 +26,6 @@ export {
   sameNode,
   isWhitelistedDeepSeekModelPath,
   whitelistedDeepSeekRoute,
-  fetchModelPaths,
-  getNodeModelPaths,
   getNodeModelPathsForModel,
   fetchModelPathsForModel,
   parseModelPathsForModelPayload,
