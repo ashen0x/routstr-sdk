@@ -317,6 +317,10 @@ async function fetchTinfoilEhbpOnce(
   }
 
   if (await isEhbpKeyConfigMismatchResponse(response, PROTOCOL)) {
+    if (headers.has("x-cashu")) {
+      clientCache.delete(cacheKey(resolved));
+      return response;
+    }
     throw new ehbp.KeyConfigMismatchError("EHBP key configuration mismatch");
   }
 

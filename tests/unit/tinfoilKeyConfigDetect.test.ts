@@ -6,7 +6,36 @@
  * signature in the wrapped body to trigger re-attestation.
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+
+vi.mock("tinfoil", () => ({
+  SecureClient: class {
+    async ready() {}
+    reset() {}
+    getVerificationDocument() { return { hpkePublicKey: "00" }; }
+    getBaseURL() { return "https://node.test"; }
+    getEnclaveURL() { return undefined; }
+  },
+}));
+
+vi.mock("ehbp", async () => {
+  const actual = await vi.importActual<typeof import("ehbp")>("ehbp");
+  return {
+    ...actual,
+    Identity: {
+      fromPublicKeyHex: async () => ({
+        encryptRequestWithContext: async (req: Request) => ({ request: req, context: {} }),
+      }),
+    },
+    extractSessionRecoveryToken: async () => "session",
+    decryptResponseWithToken: async (r: Response) => r,
+  };
+});
+
+import {
+  clearTinfoilClientCache,
+  fetchTinfoilPreservingPlaintextErrors,
+} from "../../client/TinfoilSecure";
 
 // We test the detection logic indirectly through the exported types and
 // behavior.  Since isEhbpKeyConfigMismatchResponse is not exported, we
@@ -196,5 +225,49 @@ describe("isEhbpKeyConfigMismatchResponse", () => {
         KEY_CONFIG_PROBLEM_TYPE,
       ),
     ).toBe(false);
+  });
+});
+
+describe("fetchTinfoilPreservingPlaintextErrors on a key-config 422", () => {
+  const keyConfig422 = (headers: Record<string, string> = {}) =>
+    new Response(
+      JSON.stringify({ type: KEY_CONFIG_PROBLEM_TYPE, title: "failed to read decrypted request body" }),
+      { status: 422, headers: { "content-type": "application/problem+json", ...headers } },
+    );
+
+  const send = (headers: Record<string, string>) =>
+    fetchTinfoilPreservingPlaintextErrors(
+      { baseUrl: "https://node.test", userCacheSecret: "test-secret" },
+      "https://node.test/v1/chat/completions",
+      { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" },
+    );
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearTinfoilClientCache();
+  });
+
+  it("hands an X-Cashu reply back with its refund instead of resending the spent token", async () => {
+    const fetchMock = vi.fn(async () => keyConfig422({ "X-Cashu": "cashuA-refund" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await send({ "X-Cashu": "cashuA-deposit" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(422);
+    expect(res.headers.get("X-Cashu")).toBe("cashuA-refund");
+  });
+
+  it("still re-attests and retries once for an API-key request", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(keyConfig422())
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await send({ Authorization: "Bearer sk-test" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe(200);
   });
 });
